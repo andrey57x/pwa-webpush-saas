@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PWA Push Testbed | МГТУ им. Баумана</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 600px;
+        margin: 40px auto;
+        padding: 20px;
+        line-height: 1.6;
+      }
+      button {
+        background: #0066cc;
+        color: white;
+        border: none;
+        padding: 12px 20px;
+        font-size: 16px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      button:disabled {
+        background: #ccc;
+      }
+      .status {
+        margin-top: 20px;
+        padding: 15px;
+        border-radius: 6px;
+        background: #f0f0f0;
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>PWA Web Push Demo Client</h1>
+    <p>
+      Тестовая PWA страница подписки на уведомления по протоколу RFC 8030 /
+      VAPID.
+    </p>
+
+    <button id="subscribe-btn">Включить Push-Уведомления</button>
+
+    <div id="status" class="status">
+      Статус: Ожидание действия пользователя...
+    </div>
+
+    <script>
+      const APP_CODE = "auto_vapid_app";
+      // Относительный путь! Работает на любом устройстве, домене и туннеле!
+      const API_URL = "/api/v1";
+
+      function urlBase64ToUint8Array(base64String) {
+        const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+        const base64 = (base64String + padding)
+          .replace(/\-/g, "+")
+          .replace(/_/g, "/");
+        const rawData = window.atob(base64);
+        const outputArray = new Uint8Array(rawData.length);
+        for (let i = 0; i < rawData.length; ++i) {
+          outputArray[i] = rawData.charCodeAt(i);
+        }
+        return outputArray;
+      }
+
+      async function registerPWA() {
+        const statusDiv = document.getElementById("status");
+        const btn = document.getElementById("subscribe-btn");
+
+        if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+          statusDiv.innerText =
+            "Ошибка: Ваш браузер не поддерживает Web Push API!";
+          return;
+        }
+
+        try {
+          btn.disabled = true;
+          statusDiv.innerText = "1. Регистрация Service Worker...";
+
+          const reg = await navigator.serviceWorker.register("/sw.js");
+
+          statusDiv.innerText = "2. Запрос VAPID Public Key с Go бэкенда...";
+          const appResp = await fetch(`${API_URL}/apps/${APP_CODE}`);
+          const appData = await appResp.json();
+
+          if (!appData.vapid_public_key) {
+            throw new Error("Не удалось получить VAPID ключ!");
+          }
+
+          statusDiv.innerText = "3. Запрос разрешения у пользователя...";
+          const subscription = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(
+              appData.vapid_public_key,
+            ),
+          });
+
+          const subJson = subscription.toJSON();
+
+          statusDiv.innerText = "4. Сохранение подписки в PostgreSQL...";
+          const saveResp = await fetch(`${API_URL}/subscribe`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              app_code: APP_CODE,
+              endpoint: subJson.endpoint,
+              p256dh_key: subJson.keys.p256dh,
+              auth_key: subJson.keys.auth,
+              browser: navigator.userAgent.includes("Mobile")
+                ? "Mobile Browser"
+                : "Desktop Browser",
+              os: navigator.platform || "Mobile OS",
+            }),
+          });
+
+          const savedSub = await saveResp.json();
+          statusDiv.innerHTML = `<strong>Вы успешно подписаны на уведомления!</strong><br>ID Подписки: ${savedSub.id}`;
+        } catch (err) {
+          statusDiv.innerText = `Ошибка: ${err.message}`;
+          btn.disabled = false;
+        }
+      }
+
+      document
+        .getElementById("subscribe-btn")
+        .addEventListener("click", registerPWA);
+    </script>
+  </body>
+</html>
