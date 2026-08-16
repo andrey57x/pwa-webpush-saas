@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/andrey57x/pwa-webpush-saas/internal/repository"
 	"github.com/andrey57x/pwa-webpush-saas/internal/domain"
+	"github.com/andrey57x/pwa-webpush-saas/internal/repository"
 	"github.com/google/uuid"
 )
 
@@ -64,4 +64,26 @@ func (r *CampaignRepository) UpdateStatus(ctx context.Context, id uuid.UUID, sta
 		return fmt.Errorf("failed to update campaign status: %w", err)
 	}
 	return nil
+}
+
+func (r *CampaignRepository) ListByAppID(ctx context.Context, appID uuid.UUID) ([]*domain.Campaign, error) {
+	query := `
+		SELECT id, app_id, created_by_user_id, title, body, icon_url, target_url, status, total_targeted, created_at, updated_at
+		FROM campaigns WHERE app_id = $1 ORDER BY created_at DESC
+	`
+	rows, err := r.db.QueryContext(ctx, query, appID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list campaigns: %w", err)
+	}
+	defer rows.Close()
+
+	var campaigns []*domain.Campaign
+	for rows.Next() {
+		var c domain.Campaign
+		if err := rows.Scan(&c.ID, &c.AppID, &c.CreatedByUserID, &c.Title, &c.Body, &c.IconURL, &c.TargetURL, &c.Status, &c.TotalTargeted, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		campaigns = append(campaigns, &c)
+	}
+	return campaigns, nil
 }

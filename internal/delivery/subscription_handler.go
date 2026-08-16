@@ -8,10 +8,10 @@ import (
 )
 
 type SubscriptionHandler struct {
-	usecase *usecase.SubscriptionUsecase
+	usecase SubscriptionUsecase // Интерфейс!
 }
 
-func NewSubscriptionHandler(usecase *usecase.SubscriptionUsecase) *SubscriptionHandler {
+func NewSubscriptionHandler(usecase SubscriptionUsecase) *SubscriptionHandler {
 	return &SubscriptionHandler{usecase: usecase}
 }
 

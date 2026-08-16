@@ -66,3 +66,25 @@ func (r *AppRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.App,
 	}
 	return &app, nil
 }
+
+func (r *AppRepository) ListByTenant(ctx context.Context, tenantID uuid.UUID) ([]*domain.App, error) {
+	query := `
+		SELECT id, tenant_id, name, app_code, vapid_public_key, vapid_private_key, created_at, updated_at
+		FROM apps WHERE tenant_id = $1 ORDER BY created_at DESC
+	`
+	rows, err := r.db.QueryContext(ctx, query, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list apps: %w", err)
+	}
+	defer rows.Close()
+
+	var apps []*domain.App
+	for rows.Next() {
+		var app domain.App
+		if err := rows.Scan(&app.ID, &app.TenantID, &app.Name, &app.AppCode, &app.VAPIDPublicKey, &app.VAPIDPrivateKey, &app.CreatedAt, &app.UpdatedAt); err != nil {
+			return nil, err
+		}
+		apps = append(apps, &app)
+	}
+	return apps, nil
+}

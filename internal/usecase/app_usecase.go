@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -24,9 +25,7 @@ type CreateAppRequest struct {
 	AppCode  string    `json:"app_code"`
 }
 
-// CreateApp автоматически генерирует VAPID-ключи на Go-бэкенде при создании приложения PWA
 func (u *AppUsecase) CreateApp(ctx context.Context, req *CreateAppRequest) (*domain.App, error) {
-	// 1. Автоматическая генерация пары VAPID-ключей (ECDSA P-256)
 	vapidKeys, err := vapid.GenerateKeys()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate vapid keys: %w", err)
@@ -34,7 +33,7 @@ func (u *AppUsecase) CreateApp(ctx context.Context, req *CreateAppRequest) (*dom
 
 	now := time.Now()
 	app := &domain.App{
-		ID:              uuid.New(), // UUIDv4
+		ID:              uuid.New(),
 		TenantID:        req.TenantID,
 		Name:            req.Name,
 		AppCode:         req.AppCode,
@@ -52,5 +51,16 @@ func (u *AppUsecase) CreateApp(ctx context.Context, req *CreateAppRequest) (*dom
 }
 
 func (u *AppUsecase) GetByCode(ctx context.Context, appCode string) (*domain.App, error) {
-	return u.appRepo.GetByCode(ctx, appCode)
+	app, err := u.appRepo.GetByCode(ctx, appCode)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query app: %w", err)
+	}
+	if app == nil {
+		return nil, errors.New("app not found")
+	}
+	return app, nil
+}
+
+func (u *AppUsecase) ListApps(ctx context.Context, tenantID uuid.UUID) ([]*domain.App, error) {
+	return u.appRepo.ListByTenant(ctx, tenantID)
 }

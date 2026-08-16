@@ -10,6 +10,10 @@ import (
 	"github.com/google/uuid"
 )
 
+type TenantRepository interface {
+	Create(ctx context.Context, tenant *domain.Tenant) error
+}
+
 type SubscriptionRepository interface {
 	Create(ctx context.Context, sub *domain.Subscription) error
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Subscription, error)
@@ -21,6 +25,7 @@ type SubscriptionRepository interface {
 type CampaignRepository interface {
 	Create(ctx context.Context, campaign *domain.Campaign) error
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Campaign, error)
+	ListByAppID(ctx context.Context, appID uuid.UUID) ([]*domain.Campaign, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, status domain.CampaignStatus, totalTargeted int) error
 }
 
@@ -32,6 +37,18 @@ type AppRepository interface {
 	Create(ctx context.Context, app *domain.App) error
 	GetByCode(ctx context.Context, appCode string) (*domain.App, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.App, error)
+	ListByTenant(ctx context.Context, tenantID uuid.UUID) ([]*domain.App, error)
+}
+
+type UserRepository interface {
+	Create(ctx context.Context, user *domain.User) error
+	GetByEmail(ctx context.Context, email string) (*domain.User, error)
+}
+
+type APIKeyRepository interface {
+	Create(ctx context.Context, apiKey *domain.APIKey) error
+	GetByHash(ctx context.Context, keyHash string) (*domain.APIKey, error)
+	ListByTenant(ctx context.Context, tenantID uuid.UUID) ([]*domain.APIKey, error)
 }
 
 type DedupRepository interface {
@@ -42,10 +59,13 @@ type PushJobProducer interface {
 	PublishPushJobs(ctx context.Context, tasks []*kafka.PushJobTask) error
 }
 
-// PushSender — приведен к 12 аргументам (включая campaignID и subscriptionID)
 type PushSender interface {
 	SendPush(
 		ctx context.Context,
 		endpoint, p256dh, auth, title, body, iconURL, targetURL, vapidPublicKey, vapidPrivateKey, campaignID, subscriptionID string,
 	) *pushsender.PushResult
+}
+
+type AnalyticsRepository interface {
+	GetCampaignStatusCounts(ctx context.Context, campaignID uuid.UUID) (map[domain.DeliveryStatus]int, error)
 }

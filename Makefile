@@ -1,14 +1,18 @@
 include .env
 export
 
-.PHONY: migrate-up migrate-down run-api run-worker
+.PHONY: run-api run-pizza migrate-up migrate-down
 
-# Накатить миграции в PostgreSQL
+run-api:
+	go run cmd/api/main.go
+
+run-pizza:
+	go run cmd/pizza/main.go
+
 migrate-up:
 	docker run --rm -v $(PWD)/migrations:/migrations --network host migrate/migrate \
 		-path=/migrations/ -database "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=$(POSTGRES_SSLMODE)" up
 
-# Откатить миграции
 migrate-down:
 	docker run --rm -v $(PWD)/migrations:/migrations --network host migrate/migrate \
 		-path=/migrations/ -database "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=$(POSTGRES_SSLMODE)" down -all

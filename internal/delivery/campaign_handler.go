@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/andrey57x/pwa-webpush-saas/internal/delivery/middleware"
 	"github.com/andrey57x/pwa-webpush-saas/internal/domain"
 	"github.com/andrey57x/pwa-webpush-saas/internal/usecase"
 	"github.com/go-chi/chi/v5"
@@ -13,11 +14,11 @@ import (
 )
 
 type CampaignHandler struct {
-	usecase      *usecase.CampaignUsecase
+	usecase      CampaignUsecase
 	campaignRepo usecase.CampaignRepository
 }
 
-func NewCampaignHandler(usecase *usecase.CampaignUsecase, campaignRepo usecase.CampaignRepository) *CampaignHandler {
+func NewCampaignHandler(usecase CampaignUsecase, campaignRepo usecase.CampaignRepository) *CampaignHandler {
 	return &CampaignHandler{
 		usecase:      usecase,
 		campaignRepo: campaignRepo,
@@ -60,6 +61,13 @@ func (h *CampaignHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *CampaignHandler) Send(w http.ResponseWriter, r *http.Request) {
+	tenantIDStr, _ := r.Context().Value(middleware.TenantIDKey).(string)
+	tenantID, err := uuid.Parse(tenantIDStr)
+	if err != nil || tenantID == uuid.Nil {
+		http.Error(w, `{"error":"tenant context missing"}`, http.StatusBadRequest)
+		return
+	}
+
 	campaignIDStr := chi.URLParam(r, "id")
 	campaignID, err := uuid.Parse(campaignIDStr)
 	if err != nil {
@@ -67,9 +75,8 @@ func (h *CampaignHandler) Send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Передаем context.Background() для асинхронной рассылки
 	go func() {
-		if err := h.usecase.LaunchCampaign(context.Background(), campaignID); err != nil {
+		if err := h.usecase.LaunchCampaign(context.Background(), tenantID, campaignID); err != nil {
 			log.Printf("[Campaign] Error launching campaign %s: %v", campaignID, err)
 		}
 	}()
@@ -77,4 +84,30 @@ func (h *CampaignHandler) Send(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_, _ = w.Write([]byte(`{"message":"campaign sending started"}`))
+}
+
+func (h *CampaignHandler) List(w http.ResponseWriter, r *http.Request) {
+	tenantIDStr, _ := r.Context().Value(middleware.TenantIDKey).(string)
+	tenantID, err := uuid.Parse(tenantIDStr)
+	if err != nil || tenantID == uuid.Nil {
+		http.Error(w, `{"error":"tenant context missing"}`, http.StatusBadRequest)
+		return
+	}
+
+	appIDStr := r.URL.Query().Get("app_id")
+	appID, err := uuid.Parse(appIDStr)
+	if err != nil || appID == uuid.Nil {
+		http.Error(w, `{"error":"valid app_id query parameter is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	campaigns, err := h.usecase.ListCampaigns(r.Context(), tenantID, appID)
+	if err != nil {
+		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(campaigns)
 }

@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -34,19 +35,23 @@ func NewCampaignUsecase(
 	}
 }
 
-// LaunchCampaign выборку подписчиков пачками, фильтрует через Redis и отправляет в Kafka
-func (u *CampaignUsecase) LaunchCampaign(ctx context.Context, campaignID uuid.UUID) error {
+func (u *CampaignUsecase) LaunchCampaign(ctx context.Context, tenantID, campaignID uuid.UUID) error {
 	campaign, err := u.campaignRepo.GetByID(ctx, campaignID)
-	if err != nil || campaign == nil {
-		return fmt.Errorf("campaign not found: %w", err)
+	if err != nil {
+		return fmt.Errorf("failed to query campaign: %w", err)
+	}
+	if campaign == nil {
+		return errors.New("campaign not found")
 	}
 
 	app, err := u.appRepo.GetByID(ctx, campaign.AppID)
-	if err != nil || app == nil {
-		return fmt.Errorf("app not found: %w", err)
+	if err != nil {
+		return fmt.Errorf("failed to query app: %w", err)
+	}
+	if app == nil || app.TenantID != tenantID {
+		return errors.New("access denied: campaign does not belong to this tenant")
 	}
 
-	// Обновляем статус кампании на PROCESSING
 	_ = u.campaignRepo.UpdateStatus(ctx, campaignID, domain.CampaignStatusProcessing, 0)
 
 	batchSize := 500
@@ -54,7 +59,6 @@ func (u *CampaignUsecase) LaunchCampaign(ctx context.Context, campaignID uuid.UU
 	totalSent := 0
 
 	for {
-		// 1. Извлекаем активные подписки батчами
 		subs, err := u.subRepo.GetActiveByAppID(ctx, app.ID, batchSize, offset)
 		if err != nil || len(subs) == 0 {
 			break
@@ -67,13 +71,11 @@ func (u *CampaignUsecase) LaunchCampaign(ctx context.Context, campaignID uuid.UU
 			subMap[sub.ID] = sub
 		}
 
-		// 2. Дедупликация через Redis Pipeline (SETNX c TTL 24 часа)
 		uniqueIDs, err := u.dedupRepo.FilterDuplicates(ctx, campaignID, subIDs, 24*time.Hour)
 		if err != nil {
-			uniqueIDs = subIDs // В случае сбоя Redis продолжаем отправку
+			uniqueIDs = subIDs
 		}
 
-		// 3. Формируем задачи для Kafka
 		tasks := make([]*kafka.PushJobTask, 0, len(uniqueIDs))
 		for _, id := range uniqueIDs {
 			sub := subMap[id]
@@ -100,7 +102,6 @@ func (u *CampaignUsecase) LaunchCampaign(ctx context.Context, campaignID uuid.UU
 			})
 		}
 
-		// 4. Публикуем задачи в Kafka
 		if len(tasks) > 0 {
 			if err := u.producer.PublishPushJobs(ctx, tasks); err != nil {
 				return fmt.Errorf("failed to publish push jobs: %w", err)
@@ -114,6 +115,13 @@ func (u *CampaignUsecase) LaunchCampaign(ctx context.Context, campaignID uuid.UU
 		offset += batchSize
 	}
 
-	// Финализируем статус кампании
 	return u.campaignRepo.UpdateStatus(ctx, campaignID, domain.CampaignStatusCompleted, totalSent)
+}
+
+func (u *CampaignUsecase) ListCampaigns(ctx context.Context, tenantID, appID uuid.UUID) ([]*domain.Campaign, error) {
+	app, err := u.appRepo.GetByID(ctx, appID)
+	if err != nil || app == nil || app.TenantID != tenantID {
+		return nil, errors.New("access denied or app not found")
+	}
+	return u.campaignRepo.ListByAppID(ctx, appID)
 }

@@ -37,16 +37,20 @@ func (u *SubscriptionUsecase) RegisterSubscription(ctx context.Context, req *Sub
 		return nil, fmt.Errorf("app not found for code [%s]", req.AppCode)
 	}
 
+	browser := req.Browser
+
+	osInfo := req.OS
+
 	now := time.Now()
 	sub := &domain.Subscription{
-		ID:             uuid.New(), // UUIDv4 строго генерируется на стороне Go перед INSERT
+		ID:             uuid.New(),
 		AppID:          app.ID,
 		UserIdentifier: req.UserIdentifier,
 		Endpoint:       req.Endpoint,
 		P256dhKey:      req.P256dhKey,
 		AuthKey:        req.AuthKey,
-		Browser:        req.Browser,
-		OS:             req.OS,
+		Browser:        browser,
+		OS:             osInfo,
 		IsActive:       true,
 		CreatedAt:      now,
 		UpdatedAt:      now,

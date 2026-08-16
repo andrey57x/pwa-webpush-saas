@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -47,6 +46,8 @@ func New(cfg *config.Config) (*App, error) {
 		return nil, fmt.Errorf("postgres init error: %w", err)
 	}
 
+	repoPg.StartPartitionScheduler(ctx, sqlDB)
+
 	redisClient, err := redis.NewClient(ctx, cfg.GetRedisAddr(), cfg.RedisPassword)
 	if err != nil {
 		return nil, fmt.Errorf("redis init error: %w", err)
@@ -56,9 +57,13 @@ func New(cfg *config.Config) (*App, error) {
 	logRepo := repoPg.NewDeliveryLogRepository(sqlDB)
 	appRepo := repoPg.NewAppRepository(sqlDB)
 	campaignRepo := repoPg.NewCampaignRepository(sqlDB)
+	userRepo := repoPg.NewUserRepository(sqlDB)
+	tenantRepo := repoPg.NewTenantRepository(sqlDB)
+	analyticsRepo := repoPg.NewAnalyticsRepository(sqlDB)
+	apiKeyRepo := repoPg.NewAPIKeyRepository(sqlDB)
 	dedupRepo := repoRedis.NewDedupRepository(redisClient)
 
-	brokers := strings.Split(cfg.KafkaBrokers, ",")
+	brokers := cfg.GetKafkaBrokers()
 	producer := kafka.NewProducer(brokers, cfg.KafkaTopicPushJobs)
 
 	sender := pushsender.NewSender(cfg.ContactEmail)
@@ -76,16 +81,26 @@ func New(cfg *config.Config) (*App, error) {
 	appUsecase := usecase.NewAppUsecase(appRepo)
 	campaignUsecase := usecase.NewCampaignUsecase(campaignRepo, subRepo, appRepo, dedupRepo, producer)
 	feedbackUsecase := usecase.NewFeedbackUsecase(logRepo)
+	authUsecase := usecase.NewAuthUsecase(userRepo, tenantRepo, cfg.JWTSecret)
+	analyticsUsecase := usecase.NewAnalyticsUsecase(analyticsRepo, campaignRepo, appRepo)
+	apiKeyUsecase := usecase.NewAPIKeyUsecase(apiKeyRepo)
 
 	subHandler := delivery.NewSubscriptionHandler(subUsecase)
 	appHandler := delivery.NewAppHandler(appUsecase)
 	campaignHandler := delivery.NewCampaignHandler(campaignUsecase, campaignRepo)
 	feedbackHandler := delivery.NewFeedbackHandler(feedbackUsecase)
+	authHandler := delivery.NewAuthHandler(authUsecase)
+	analyticsHandler := delivery.NewAnalyticsHandler(analyticsUsecase)
+	apiKeyHandler := delivery.NewAPIKeyHandler(apiKeyUsecase)
 
-	r := router.NewRouter(subHandler, campaignHandler, appHandler, feedbackHandler)
+	r := router.NewRouter(
+		subHandler, campaignHandler, appHandler, feedbackHandler,
+		authHandler, analyticsHandler, apiKeyHandler, apiKeyRepo, cfg.JWTSecret,
+	)
 
+	listenAddr := fmt.Sprintf("%s:%s", cfg.APIHost, cfg.APIPort)
 	httpServer := &http.Server{
-		Addr:    ":" + cfg.APIPort,
+		Addr:    listenAddr,
 		Handler: r,
 	}
 
@@ -106,7 +121,7 @@ func (a *App) Run() error {
 	go a.consumer.Start(ctx)
 
 	go func() {
-		log.Printf("HTTP Server listening on http://localhost:%s", a.cfg.APIPort)
+		log.Printf("HTTP SaaS Server listening on [%s:%s] (mode: %s)", a.cfg.APIHost, a.cfg.APIPort, a.cfg.AppEnv)
 		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("HTTP Server failed: %v", err)
 		}
